@@ -283,10 +283,11 @@ ${JSON.stringify(inputJson, null, 2)}
 
 [작성 가이드]
 1) fortuneStage.explain: 입력된 key/score를 요약해 3~5문장으로 체감 설명.
+   - 2026년(병오년)의 발산·통제·조율 요구가 높고 안정 지원이 낮은 특성과, 개인 사주의 계절/시간대/안정·조율 vs 발산·통제 균형을 함께 엮어 설명합니다.
 2) candidatePool: 단계→학년 매핑 규칙을 1~2문장으로 설명.
 3) finalPredictionExplain:
    - title: INPUT_JSON.finalPrediction을 그대로 사용해 한 줄로 요약.
-   - sajuReason: INPUT_JSON.logicReasoning.selectionRecall을 압축해 카드용 짧은 이유 작성.
+   - sajuReason: **숫자·퍼센트 대신** 계절/시간대/안정·조율 vs 발산·통제의 균형 같은 사주 흐름을 근거로, 왜 이 학년(또는 교과전담)으로 기운이 모이는지 풀이식으로 설명. INPUT_JSON.logicReasoning.selectionRecall은 참고만 하고, 퍼센트 언급 금지.
    - whatItMeansInSchool: 학교 현장에서 체감될 상황을 2~4문장으로 설명.
 4) 대성(교과전담)일 때: 축하·격려 톤, "올해는 선생님의 무대" 같은 표현 포함.
 
@@ -351,7 +352,7 @@ const getFallbackTeacherFortune = (name) => {
     gradeNumber: 3,
     isDaeseong: false,
     headline: "2026년, 조화와 균형의 해",
-    fortuneStage: { key: "합운(合運)", explain: "안정적인 흐름입니다." },
+    fortuneStage: { key: "합운", explain: "안정적인 흐름입니다." },
     finalPredictionExplain: {
       title: "2026년 운의 흐름: 3학년",
       sajuReason: "안정과 조율의 기운이 조화롭게 어우러짐",
