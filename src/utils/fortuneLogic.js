@@ -287,7 +287,7 @@ ${JSON.stringify(inputJson, null, 2)}
 2) candidatePool: 단계→학년 매핑 규칙을 1~2문장으로 설명.
 3) finalPredictionExplain:
    - title: INPUT_JSON.finalPrediction을 그대로 사용해 한 줄로 요약.
-   - sajuReason: **숫자·퍼센트 대신** 계절/시간대/안정·조율 vs 발산·통제의 균형 같은 사주 흐름을 근거로, 왜 이 학년(또는 교과전담)으로 기운이 모이는지 풀이식으로 설명. INPUT_JSON.logicReasoning.selectionRecall은 참고만 하고, 퍼센트 언급 금지.
+   - sajuReason: **숫자·퍼센트 대신** 계절/시간대/안정·조율 vs 발산·통제의 균형 같은 사주 흐름을 근거로, “왜 선택된 학년이 올해의 역할에 어울리는지”를 전체 관점에서 설명. 다른 후보와의 비교·수치·퍼센트 언급은 피하고, 선택된 학년의 역할/기조와 개인 기운의 궁합을 중심으로 풀어주세요. INPUT_JSON.logicReasoning.selectionRecall은 참고만.
    - whatItMeansInSchool: 학교 현장에서 체감될 상황을 2~4문장으로 설명.
 4) 대성(교과전담)일 때: 축하·격려 톤, "올해는 선생님의 무대" 같은 표현 포함.
 
