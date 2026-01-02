@@ -1,7 +1,46 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// Initialize OpenAI API
+const apiKey = (typeof import.meta !== 'undefined' && import.meta.env)
+  ? import.meta.env.VITE_OPENAI_API_KEY
+  : process.env.VITE_OPENAI_API_KEY;
 
-// Initialize Gemini API
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_MODEL = "gpt-5-mini";
+
+const requestOpenAIJson = async (prompt) => {
+  if (!apiKey) {
+    throw new Error("Missing OpenAI API key. Set VITE_OPENAI_API_KEY.");
+  }
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [{ role: "user", content: prompt.trim() }],
+      response_format: { type: "json_object" }
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI API Error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenAI API Error: empty response.");
+  }
+
+  try {
+    return JSON.parse(content);
+  } catch (parseError) {
+    throw new Error("OpenAI API Error: invalid JSON response.");
+  }
+};
 
 // --- 1. Vector Definitions ---
 
@@ -87,52 +126,39 @@ const calculatePersonalVector = (dob, birthTime) => {
   return v;
 };
 
-const calculateFortuneStage = (personalVec, yearVec) => {
-  // Stress Calculation: Gap between Demand and Capacity
-  // Logic: Stress = max(0, YearDemand - PersonalCapacity)
-
+const calculateFortuneStage = (personalVec) => {
+  // Stress Calculation: Gap between Year Demand(7 for expressive/control/mediation, 5 for stable) and Personal Capacity
   let stress = 0;
-
-  // 1. Expressive Gap (High Demand)
-  // If Year=3 (High), we expect Personal >= 7.
   stress += Math.pow(Math.max(0, 7 - personalVec.expressive), 2.0);
-
-  // 2. Control Gap (High Demand)
-  // If Year=3 (High), we expect Personal >= 7.
   stress += Math.pow(Math.max(0, 7 - personalVec.control), 2.0);
-
-  // 3. Mediation Gap (High Demand)
-  // If Year=3 (High), we expect Personal >= 7.
   stress += Math.pow(Math.max(0, 7 - personalVec.mediation), 2.0);
-
-  // 4. Stable Gap (Low Support / Drain)
-  // Year=-1. Requires internal stability to withstand. Expect Personal >= 5.
   stress += Math.pow(Math.max(0, 5 - personalVec.stable), 2.0);
 
-  // Max possible stress: 7^2 * 3 + 5^2 = 147 + 25 = 172.
-  // Normalize to 0-100. (Stress * 4.0 strictly)
+  // Normalize to 0-100
   const stressScore = Math.min(100, stress * 4.0);
+  const capacityScore = personalVec.stable + personalVec.mediation; // 안정+조율 합
 
-  let key = "평운(平運)";
-  let desc = "무난하고 안정적인 흐름을 보이는 해입니다.";
+  let key = "평운";
+  let desc = "무난한 흐름. 선택과 집중에 따라 결과가 달라질 수 있습니다.";
   let isDaeseong = false;
 
-  // Revised Logic: Daeseong (High Capacity) overrides Stress up to a limit.
-  if ((personalVec.stable + personalVec.mediation) >= 12 && stressScore < 80) {
-    key = "대운·대성(大運 / 大成)";
-    desc = "판이 바뀌고 큰 역할이 주어지는 매우 희귀하고 강력한 운입니다.";
+  if (capacityScore >= 12 && stressScore < 80) {
+    key = "대성";
+    desc = "판이 바뀌고 큰 역할이 주어지는 시기. 구조를 설계하고 주도할 에너지가 있습니다.";
     isDaeseong = true;
   } else if (stressScore >= 65) {
-    key = "형충(刑沖)";
-    desc = "변화와 역동성이 강하게 나타나며, 에너지 소모에 주의해야 하는 해입니다.";
-  } else if (stressScore >= 25) {
-    key = "평운(平運)";
-    desc = "큰 기복 없이 무난하나, 선택에 따라 흐름이 달라질 수 있는 해입니다.";
+    key = "형충";
+    desc = "변화·역동이 강해 부담이 큰 시기. 에너지 관리와 방어적 운영이 중요합니다.";
+  } else if (stressScore >= 35) {
+    key = "평운";
+    desc = "큰 기복 없이 무난하나, 선택에 따라 흐름이 갈립니다.";
   } else {
-    key = "합운(合運)";
-    desc = "주변 환경과 나의 기운이 물 흐르듯 조화롭게 어우러지는 해입니다.";
+    key = "합운";
+    desc = "환경과 개인 기운이 조화롭게 어우러져 흐름이 매끄럽습니다.";
   }
-  return { key, desc, isDaeseong, stressScore };
+
+  const stageReason = `스트레스 점수 ${stressScore.toFixed(1)}, 안정+조율 ${capacityScore} → ${key}`;
+  return { key, desc, isDaeseong, stressScore, capacityScore, stageReason };
 };
 
 const calculateGradeProbabilities = (personalVec, yearVec) => {
@@ -163,107 +189,144 @@ const calculateGradeProbabilities = (personalVec, yearVec) => {
 
 export const calculateTeacherFortune = async (name, dob, birthTime) => {
   try {
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
-    });
-
     const age = calculateAge(dob);
     const zodiac = getZodiac(dob);
 
     // 1. Calculate Vectors & Stats
     const personalVec = calculatePersonalVector(dob, birthTime);
-    const { key: fortuneStageKey, desc: fortuneStageDesc, isDaeseong, stressScore } = calculateFortuneStage(personalVec, YEAR_VECTOR_2026);
+    const {
+      key: fortuneStageKey,
+      desc: fortuneStageDesc,
+      isDaeseong,
+      stressScore,
+      capacityScore,
+      stageReason
+    } = calculateFortuneStage(personalVec);
     const { probabilities, dominant } = calculateGradeProbabilities(personalVec, YEAR_VECTOR_2026);
 
     // 2. Determine Final Prediction based on Fortune Stage
     let finalGrade = null;
     let finalType = "grade";
+    let candidateReason = "";
+
+    const candidatePool = isDaeseong
+      ? ["교과전담"]
+      : fortuneStageKey === "형충"
+        ? [1, 6]
+        : fortuneStageKey === "평운"
+          ? [2, 5]
+          : [3, 4]; // 합운 기본
 
     if (isDaeseong) {
       finalType = "subjectTeacher";
       finalGrade = null;
+      candidateReason = "대성의 강한 추진력으로 학년 고정 없이 전학년을 조율·지원하는 교과전담이 적합함";
     } else {
-      // Filter grades based on stage
-      let candidateGrades = [];
-      if (fortuneStageKey.includes("형충")) {
-        candidateGrades = [1, 6];
-      } else if (fortuneStageKey.includes("평운")) {
-        candidateGrades = [2, 5];
-      } else { // 합운
-        candidateGrades = [3, 4];
-      }
+      // Pick the one with higher probability among candidatePool
+      const c1 = probabilities.find(p => p.grade === candidatePool[0]);
+      const c2 = probabilities.find(p => p.grade === candidatePool[1]);
 
-      // Pick the one with higher probability
-      const c1 = probabilities.find(p => p.grade === candidateGrades[0]);
-      const c2 = probabilities.find(p => p.grade === candidateGrades[1]);
-      finalGrade = (c1.percent >= c2.percent) ? c1.grade : c2.grade;
+      if (c1.percent >= c2.percent) {
+        finalGrade = c1.grade;
+        candidateReason = `${candidatePool[0]}학년(${c1.percent}%) vs ${candidatePool[1]}학년(${c2.percent}%). 더 높은 적합도를 보인 ${candidatePool[0]}학년 선택.`;
+      } else {
+        finalGrade = c2.grade;
+        candidateReason = `${candidatePool[1]}학년(${c2.percent}%) vs ${candidatePool[0]}학년(${c1.percent}%). 더 높은 적합도를 보인 ${candidatePool[1]}학년 선택.`;
+      }
     }
 
     // 3. Prepare Input JSON for AI
     const inputJson = {
-      fortuneStage: { key: fortuneStageKey, desc: fortuneStageDesc },
-      yearMeta: { age, zodiac, name },
+      meta: { name, dob, birthTime, age, zodiac, year: 2026, yearNote: "붉은 말의 해" },
+      fortuneStage: {
+        key: fortuneStageKey,
+        desc: fortuneStageDesc,
+        stressScore,
+        capacityScore,
+        reason: stageReason
+      },
+      candidatePool: {
+        grades: candidatePool,
+        rule: isDaeseong
+          ? "대성 → 교과전담"
+          : fortuneStageKey === "형충"
+            ? "형충 → 1, 6학년"
+            : fortuneStageKey === "평운"
+              ? "평운 → 2, 5학년"
+              : "합운 → 3, 4학년"
+      },
       finalPrediction: { type: finalType, grade: finalGrade },
+      logicReasoning: {
+        candidates: candidatePool,
+        selectionRecall: candidateReason,
+        personalVector: personalVec
+      },
       isDaeseong
     };
 
     const prompt = `
 당신은 사주·명리(연운/오행/합·충)를 이해하지만,
-사주 전문가가 아닌 초등학교 교사가 읽어도 이해할 수 있도록
-‘2026년 연운 예측 리포트’를 차분한 상담 보고서 톤으로 작성하는 해설자입니다.
+사주 전문가가 아닌 교사가 읽어도 이해할 수 있는 상담 보고서 톤의 해설자입니다.
 
-[핵심 철학]
-- 이 서비스는 "추천(Recommendation)"이 아니라 "예측(Prediction)"입니다.
-- 연운(2026 병오년)의 요구와 개인 기질의 간격(Stress)에 따라 현실적으로 배치될 가능성이 높은 곳을 알려줍니다.
-- 당신은 결과를 바꾸지 않고, "왜 이 결과가 나왔는지"를 설명합니다.
+[연운 단계는 이미 코드에서 점수화 완료]
+- fortuneStage.key/stressScore/capacityScore는 입력 그대로 사용하고 재계산·변경하지 마세요.
+- candidatePool(학년 후보군)도 입력 그대로 사용하며, 규칙을 설명만 합니다.
+- finalPrediction.type/grade도 입력 그대로 사용하고, 이유만 풀어줍니다.
 
-[2026년 병오년(붉은 말의 해) 해석 기준]
-- 발산/통제/조율 요구가 높고, 안정 지원이 낮은 해입니다.
-- "바쁜 해", "산만해진다" 등의 표현은 금지합니다.
-- 대신 "감정과 반응이 드러나는 해", "판단과 개입이 중요한 해"로 해석하세요.
+[2026년 병오년 해석 기준]
+- 발산/통제/조율 요구가 높고, 안정 지원이 낮은 해
+- "바쁜 해", "산만해진다" 금지 → "감정이 드러난다", "판단과 개입이 중요"로 표현
 
 [입력 데이터]
 INPUT_JSON:
 ${JSON.stringify(inputJson, null, 2)}
 
-[출력 형식]
-아래 JSON 스키마대로만 출력하세요. JSON 외 텍스트 금지.
+[작성 가이드]
+1) fortuneStage.explain: 입력된 key/score를 요약해 3~5문장으로 체감 설명.
+2) candidatePool: 단계→학년 매핑 규칙을 1~2문장으로 설명.
+3) finalPredictionExplain:
+   - title: INPUT_JSON.finalPrediction을 그대로 사용해 한 줄로 요약.
+   - sajuReason: INPUT_JSON.logicReasoning.selectionRecall을 압축해 카드용 짧은 이유 작성.
+   - whatItMeansInSchool: 학교 현장에서 체감될 상황을 2~4문장으로 설명.
+4) 대성(교과전담)일 때: 축하·격려 톤, "올해는 선생님의 무대" 같은 표현 포함.
 
+[출력 형식(JSON만)]
 {
-  "headline": "string(한 줄 요약: 2026년 예측의 핵심을 교사 언어로)",
+  "headline": "string(한 줄 요약; 대성이면 축하 톤)",
   "fortuneStage": {
-    "key": "string(INPUT_JSON.fortuneStage.key 그대로)",
-    "explain": "string(형충/평운/합운/대성의 뜻 + 2026년에 어떻게 체감될지 3~5문장)"
+    "key": "string(INPUT_JSON.fortuneStage.key)",
+    "explain": "string(4단계 의미 + 2026 체감 3~5문장)",
+    "scoreExplain": "string(스트레스/안정+조율 점수 요약 1~2문장)"
+  },
+  "candidatePool": {
+    "grades": "string('1,6학년' 등 또는 '교과전담')",
+    "whyTheseGrades": "string(단계→학년 규칙 설명 1~2문장)"
   },
   "finalPredictionExplain": {
-    "title": "string(최종 결과 한 줄: 예: '2026년 운의 흐름이 향하는 곳: 6학년' / '대성 흐름: 교과전담')",
-    "sajuReason": "string(UI 카드용 짧은 이유: 예: '강한 발산 기운이 충돌하여 역동적인 1학년과 공명')",
-    "whatItMeansInSchool": "string(학교 현장 언어로: 올해 어떤 종류의 한 해가 될지 2~4문장)"
+    "title": "string(예: '2026년 운의 흐름이 향하는 곳: 6학년' / '대성 흐름: 교과전담')",
+    "sajuReason": "string(후보 비교·선택 이유를 짧게)",
+    "whatItMeansInSchool": "string(학교 현장 언어로 2~4문장)"
   },
   "managementAdvice": {
-    "classOperation": "string(학급 운영 조언: 규칙, 분위기 조성, 환경 구성 등 구체적 방법 2~3문장)",
-    "studentGuidance": "string(학생 지도 조언: 문제 행동 대응, 라포 형성, 생활 지도 팁 2~3문장)",
-    "parentCommunication": "string(학부모 상담 조언: 신뢰 형성, 소통 방식, 민원 예방 팁 2~3문장)"
+    "classOperation": "string(규칙·환경·분위기 조언 2~3문장)",
+    "studentGuidance": "string(라포·지도·문제대응 조언 2~3문장)",
+    "parentCommunication": "string(소통·신뢰·민원 예방 조언 2~3문장)"
   },
   "uiHints": {
-    "primaryCardId": "string('G1'~'G6' 또는 'SUBJECT')"
+    "primaryCardId": "string('G{grade}' or 'SUBJECT')"
   }
 }
 
 [uiHints 규칙]
-- INPUT_JSON.finalPrediction.type이 "grade"면 primaryCardId = "G{grade}"
-- "subjectTeacher"면 primaryCardId = "SUBJECT"
+- INPUT_JSON.finalPrediction.type === "grade" → primaryCardId = "G{grade}"
+- "subjectTeacher" → primaryCardId = "SUBJECT"
 
-[교담(대성) 모드 규칙]
-- INPUT_JSON.isDaeseong이 true라면:
-  - 담임 기준 표현을 최대한 피하고,
-  - “멀리서 전체를 바라보며 구조를 정리하는 역할” 관점으로 작성하세요.
-  - '대성(大成)'이라는 단어는 finalPredictionExplain.whatItMeansInSchool에서 딱 1번만 사용하세요.
+[대성 모드 추가 규칙]
+- 담임 관점 표현을 피하고, 전학년을 조율·지원하는 톤으로 작성.
+- '대성' 단어는 whatItMeansInSchool에서 최대 1회만 사용.
 `;
 
-    const result = await model.generateContent(prompt);
-    const response = JSON.parse(result.response.text());
+    const response = await requestOpenAIJson(prompt);
 
     return {
       name,
@@ -274,7 +337,7 @@ ${JSON.stringify(inputJson, null, 2)}
       ...response
     };
   } catch (error) {
-    console.error("Gemini API Error:", error);
+    console.error("OpenAI API Error:", error);
     return getFallbackTeacherFortune(name);
   }
 };
